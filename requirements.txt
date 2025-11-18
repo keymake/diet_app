@@ -1,3 +1,5 @@
 streamlit==1.38.0
 pandas==2.2.2
-supabase==2.4.0
+supabase-python==0.0.0
+gotrue==1.0.2
+postgrest==0.10.6
