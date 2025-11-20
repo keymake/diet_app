@@ -127,7 +127,6 @@ def save_data(df: pd.DataFrame) -> pd.DataFrame:
     - delete() 사용 금지
     - id가 있는 row: update
     - id가 없는 row: insert 후 반환된 id를 df에 반영
-    - F 생성 등도 여기서 처리하되, DB에는 insert/update만 사용
     """
     if df is None or df.empty:
         return df
@@ -182,7 +181,6 @@ def load_config():
 
 def save_config(config: dict):
     """설정을 Supabase에 저장 (전체 삭제 후 재삽입)."""
-    # config는 어차피 몇 줄 안 되니까 기존 방식 그대로 둔다.
     supabase = get_supabase_client()
     supabase.table("config").delete().neq("id", 0).execute()
 
@@ -207,7 +205,6 @@ def find_last_T(df: pd.DataFrame, today_iso: str):
 def mark_F(df: pd.DataFrame, last_t_date: str, today_date: str):
     """
     T와 T 사이의 빈 날짜를 F로 채워넣기.
-    - 새 F row는 id=None으로 생성 (insert 대상)
     """
     last = datetime.strptime(last_t_date, "%Y-%m-%d")
     today = datetime.strptime(today_date, "%Y-%m-%d")
@@ -282,6 +279,14 @@ def page_A():
 
     df = load_data()
 
+    # -------------------- 추가된 부분: 총합 포인트 항상 표시 --------------------
+    if df.empty:
+        st.write("총합 포인트: **0점**")
+    else:
+        last_total = df["total_score"].fillna(0).astype(float).iloc[-1]
+        st.write(f"총합 포인트: **{last_total}점**")
+    # ------------------------------------------------------------------------
+
     now_kst = get_kst_now()
     today_iso = now_kst.strftime("%Y-%m-%d")
     today_kr = now_kst.strftime("%Y년 %m월 %d일")
@@ -303,7 +308,7 @@ def page_A():
     st.subheader("오늘 날짜")
     st.write(f"한국 기준: **{today_kr}**")
 
-    # 직전 T 찾기 (오늘 제외)
+    # 직전 T 찾기
     last_T = find_last_T(df, today_iso)
     if last_T is not None:
         last_t_date, last_t_weight = last_T
@@ -368,16 +373,13 @@ def page_A():
         "간식": int(kcal_sn),
     }
 
-    # ---------- 1) 식단만 저장 (몸무게/포인트는 손대지 않음) ----------
+    # ---------- 식단만 저장 ----------
     if st.button("오늘 식단만 저장 (몸무게/포인트 X)"):
-        # 오늘 row가 있으면 그 행만 갱신, 없으면 미확정 상태로 새로 생성
         if not today_row.empty:
             idxs = df.index[df["date"] == today_iso]
             df.loc[idxs, "calories_breakdown"] = [cb_dict] * len(idxs)
             df.loc[idxs, "total_calories"] = int(total_kcal)
-            # status / score / total_score / weight는 그대로 둔다
         else:
-            # 이전까지의 총합 포인트 유지
             if df.empty:
                 prev_total_score = 0.0
             else:
@@ -399,42 +401,36 @@ def page_A():
 
         df = df.sort_values("date").reset_index(drop=True)
         save_data(df)
-        st.success("오늘 식단만 저장되었습니다. (몸무게/포인트는 그대로)")
+        st.success("오늘 식단만 저장되었습니다.")
 
-    # ---------- 2) 오늘 T 기록 저장 (몸무게 인증) ----------
+    # ---------- T 기록 저장 ----------
     if st.button("오늘 T 기록 저장 (몸무게 인증)"):
-        # 30일 초과 기록은 메모리 상에서만 잘라서 계산에 사용
+
         cutoff_date = (
             datetime.strptime(today_iso, "%Y-%m-%d") - timedelta(days=30)
         ).strftime("%Y-%m-%d")
 
         df_recent = df[df["date"] >= cutoff_date].copy()
 
-        # 중복 방지: 오늘 이미 T면 막기 (전체 df 기준)
         if not df.empty and (
             (df["date"] == today_iso) & (df["status"] == "T")
         ).any():
             st.error("오늘 날짜에 이미 T 기록이 존재합니다.")
             return
 
-        # 오늘 row가 있는지 확인 (미확정/기타)
         existing_today_rows = df_recent[df_recent["date"] == today_iso]
 
-        # F 채우기 (직전 T 기준, 오늘 제외한 값 사용)
         if last_t_date is not None:
             df_recent, num_f = mark_F(df_recent, last_t_date, today_iso)
         else:
             num_f = 0
 
-        # 오늘 T row 구성
         if not existing_today_rows.empty:
-            # 기존 오늘 row를 T로 덮어쓴다 (몸무게/칼로리 갱신)
             idxs = df_recent.index[df_recent["date"] == today_iso]
             df_recent.loc[idxs, "weight"] = float(weight)
             df_recent.loc[idxs, "status"] = "T"
             df_recent.loc[idxs, "calories_breakdown"] = [cb_dict] * len(idxs)
             df_recent.loc[idxs, "total_calories"] = int(total_kcal)
-            # 점수는 아래에서 새로 계산
         else:
             new_row = {
                 "id": None,
@@ -443,12 +439,11 @@ def page_A():
                 "status": "T",
                 "calories_breakdown": cb_dict,
                 "total_calories": int(total_kcal),
-                "score": 0.0,       # 임시, 아래에서 덮어씀
-                "total_score": 0.0, # 임시
+                "score": 0.0,
+                "total_score": 0.0,
             }
             df_recent = pd.concat([df_recent, pd.DataFrame([new_row])], ignore_index=True)
 
-        # T들만 정렬해서 오늘 T의 index 찾기
         t_only = df_recent[df_recent["status"] == "T"].sort_values("date")
         today_t_row = t_only[t_only["date"] == today_iso]
         if today_t_row.empty:
@@ -467,15 +462,11 @@ def page_A():
 
         today_score = calculate_score(prev_weight_val, float(weight), num_f)
 
-        # 오늘 T score 반영
         df_recent.loc[today_t_idx, "score"] = float(today_score)
 
-        # total_score 전체 재계산 (최근 구간 기준)
         df_recent = df_recent.sort_values("date").reset_index(drop=True)
         df_recent = recalc_total_scores(df_recent)
 
-        # 최근 구간만 원본 df에 다시 merge
-        # (cutoff 이전 데이터는 손대지 않음)
         df_older = df[df["date"] < cutoff_date].copy()
         df_merged = pd.concat([df_older, df_recent], ignore_index=True)
         df_merged = df_merged.sort_values("date").reset_index(drop=True)
@@ -485,7 +476,7 @@ def page_A():
         st.success("오늘 T 기록이 저장되었습니다.")
         st.write(f"F 개수: {num_f}")
         st.write(f"오늘 포인트: **{today_score}점**")
-        # df_recent 마지막 total_score 출력
+
         latest_total = (
             df_recent["total_score"].fillna(0).astype(float).iloc[-1]
             if not df_recent.empty
@@ -502,7 +493,7 @@ def page_A():
     st.markdown("---")
     st.subheader("T 기록 수정하기")
 
-    df = load_data()  # 위에서 저장했을 수 있으니 다시 로드
+    df = load_data()
     t_rows = df[df["status"] == "T"].sort_values("date")
     t_dates = t_rows["date"].tolist()
 
@@ -556,14 +547,13 @@ def page_A():
     }
 
     if st.button("이 날짜 수정 저장"):
-        # 선택 날짜 행만 수정 (id 기반으로 나중에 update)
+
         df.loc[df["date"] == selected_date, "weight"] = float(new_weight)
         df.loc[df["date"] == selected_date, "calories_breakdown"] = new_cb_dict
         df.loc[df["date"] == selected_date, "total_calories"] = int(
             new_total_kcal
         )
 
-        # 점수 재계산: T들 전체 다시 계산하는 쪽이 안전
         t_only = df[df["status"] == "T"].sort_values("date").copy()
         t_idxs = list(t_only.index)
 
@@ -573,11 +563,9 @@ def page_A():
             else:
                 prev_w = float(t_only.loc[t_idxs[pos - 1], "weight"])
             cur_w = float(t_only.loc[idx, "weight"])
-            # F는 별도로 세지 않고, 수정 시에는 num_f=0으로 간다
             new_score = calculate_score(prev_w, cur_w, 0)
             df.loc[idx, "score"] = new_score
 
-        # total_score 전체 재계산
         df = df.sort_values("date").reset_index(drop=True)
         df = recalc_total_scores(df)
 
@@ -596,7 +584,6 @@ def page_B():
 
     st.subheader("키 설정")
 
-    # 문자열로 저장된 값을 float로 변환
     current_height_raw = config.get("height_cm", "170.0")
     try:
         current_height = float(current_height_raw)
