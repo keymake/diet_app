@@ -142,9 +142,7 @@ def _normalize_row_for_save(row: pd.Series) -> dict:
         "weight": _num_or_none(row.get("weight")),
         "status": row.get("status"),
         "meals": _normalize_meals(row.get("meals")),
-        "calories_breakdown": _normalize_calories_breakdown(
-            row.get("calories_breakdown")
-        ),
+        "calories_breakdown": _normalize_calories_breakdown(row.get("calories_breakdown")),
         "total_calories": (
             int(row.get("total_calories"))
             if not pd.isna(row.get("total_calories"))
@@ -368,10 +366,9 @@ def page_A():
     meals_dict = {"아침": bf, "점심": lu, "저녁": di}
     cb_dict = {"아침": int(kcal_bf), "점심": int(kcal_lu), "저녁": int(kcal_di)}
 
+    # ---------------- 운동 기록 (단 한 번만) ----------------
     st.markdown("---")
     st.subheader("운동 기록 (누적)")
-
-    exercise_input = st.text_input("운동 입력 (예: 스쿼트 30회 x 3세트)", key="exercise_input")
 
     st.write("오늘 기록된 운동:")
     if prev_exercises:
@@ -379,6 +376,46 @@ def page_A():
             st.write(f"{i}. {ex}")
     else:
         st.write("- 아직 없음 -")
+
+    with st.form("exercise_form", clear_on_submit=True):
+        exercise_text = st.text_input("운동 입력 (예: 스쿼트 30회 x 3세트)")
+        submitted = st.form_submit_button("운동량 저장 (기록하기)")
+
+    if submitted:
+        ex = str(exercise_text).strip()
+        if not ex:
+            st.warning("운동 내용을 입력해줘.")
+        else:
+            if not today_row.empty:
+                # 같은 날짜 row가 여러 개 있을 수 있으니 전부 동일하게 동기화
+                idxs = df.index[df["date"] == today_iso].tolist()
+                idx0 = idxs[0]
+
+                current = _normalize_exercises(df.at[idx0, "exercises"])
+                current.append(ex)
+
+                for ix in idxs:
+                    df.at[ix, "exercises"] = current
+            else:
+                prev_total_score = 0.0 if df.empty else df["total_score"].fillna(0).astype(float).iloc[-1]
+                new_row = {
+                    "id": None,
+                    "date": today_iso,
+                    "weight": None,
+                    "status": "미확정",
+                    "meals": meals_dict,
+                    "calories_breakdown": cb_dict,
+                    "total_calories": int(total_kcal),
+                    "exercises": [ex],
+                    "score": 0.0,
+                    "total_score": float(prev_total_score),
+                }
+                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+
+            df = df.sort_values("date").reset_index(drop=True)
+            save_data(df)
+            st.success("운동이 추가 저장되었습니다. (누적)")
+            st.rerun()
 
     # ---------- 식단만 저장 ----------
     if st.button("오늘 식단만 저장 (몸무게/포인트 X)"):
@@ -408,23 +445,6 @@ def page_A():
         st.success("오늘 식단만 저장되었습니다.")
         st.rerun()
 
-    # ---------- 운동량 저장 (누적 append) ----------
-    
-
-    st.markdown("---")
-    st.subheader("운동 기록 (누적)")
-
-    st.write("오늘 기록된 운동:")
-    if prev_exercises:
-        for i, ex in enumerate(prev_exercises, 1):
-            st.write(f"{i}. {ex}")
-    else:
-        st.write("- 아직 없음 -")
-
-    with st.form("exercise_form", clear_on_submit=True):
-        exercise_input = st.text_input("운동 입력 (예: 스쿼트 30회 x 3세트)")
-        submitted = st.form_submit_button("운동량 저장 (기록하기)")
-
     # ---------- T 기록 저장 ----------
     if st.button("오늘 T 기록 저장 (몸무게 인증)"):
         cutoff_date = (datetime.strptime(today_iso, "%Y-%m-%d") - timedelta(days=30)).strftime("%Y-%m-%d")
@@ -448,6 +468,7 @@ def page_A():
             df_recent.loc[idxs, "meals"] = [meals_dict] * len(idxs)
             df_recent.loc[idxs, "calories_breakdown"] = [cb_dict] * len(idxs)
             df_recent.loc[idxs, "total_calories"] = int(total_kcal)
+            # exercises 유지
         else:
             new_row = {
                 "id": None,
