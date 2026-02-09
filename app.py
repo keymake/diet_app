@@ -410,15 +410,6 @@ def page_A():
 
     # ---------- 운동량 저장 (누적 append) ----------
     
-    st.markdown("---")
-    st.subheader("운동 기록 (누적)")
-
-    st.write("오늘 기록된 운동:")
-    if prev_exercises:
-        for i, ex in enumerate(prev_exercises, 1):
-            st.write(f"{i}. {ex}")
-    else:
-        st.write("- 아직 없음 -")
 
     with st.form("exercise_form", clear_on_submit=True):
         exercise_input = st.text_input("운동 입력 (예: 스쿼트 30회 x 3세트)")
