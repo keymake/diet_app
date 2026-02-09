@@ -31,10 +31,10 @@ def empty_data_df():
             "date",
             "weight",
             "status",
-            "meals",                # NEW: 식단 텍스트
+            "meals",
             "calories_breakdown",
             "total_calories",
-            "exercises",            # NEW: 운동 기록 리스트
+            "exercises",
             "score",
             "total_score",
         ]
@@ -118,12 +118,9 @@ def _normalize_exercises(ex_raw):
         return []
     if isinstance(ex_raw, list):
         return [str(x) for x in ex_raw if str(x).strip()]
-    # dict로 잘못 저장된 경우 방어
     if isinstance(ex_raw, dict):
-        # dict values를 리스트화
         vals = list(ex_raw.values())
         return [str(x) for x in vals if str(x).strip()]
-    # 문자열 하나로 들어온 경우
     s = str(ex_raw).strip()
     return [s] if s else []
 
@@ -145,7 +142,9 @@ def _normalize_row_for_save(row: pd.Series) -> dict:
         "weight": _num_or_none(row.get("weight")),
         "status": row.get("status"),
         "meals": _normalize_meals(row.get("meals")),
-        "calories_breakdown": _normalize_calories_breakdown(row.get("calories_breakdown")),
+        "calories_breakdown": _normalize_calories_breakdown(
+            row.get("calories_breakdown")
+        ),
         "total_calories": (
             int(row.get("total_calories"))
             if not pd.isna(row.get("total_calories"))
@@ -161,8 +160,7 @@ def _normalize_row_for_save(row: pd.Series) -> dict:
 
 def save_data(df: pd.DataFrame) -> pd.DataFrame:
     """
-    records 저장 로직 (전면 교체 버전)
-    - delete() 사용 금지
+    records 저장 로직
     - id가 있는 row: update
     - id가 없는 row: insert 후 반환된 id를 df에 반영
     """
@@ -301,7 +299,6 @@ def page_A():
 
     df = load_data()
 
-    # 총합 포인트 항상 표시
     if df.empty:
         st.write("총합 포인트: **0점**")
     else:
@@ -312,13 +309,10 @@ def page_A():
     today_iso = now_kst.strftime("%Y-%m-%d")
     today_kr = now_kst.strftime("%Y년 %m월 %d일")
 
-    # 오늘 기록 불러오기
     today_row = df[df["date"] == today_iso]
 
     if not today_row.empty:
-        prev_cb = today_row.iloc[0]["calories_breakdown"]
-        prev_cb = _normalize_calories_breakdown(prev_cb)
-
+        prev_cb = _normalize_calories_breakdown(today_row.iloc[0]["calories_breakdown"])
         prev_meals = _normalize_meals(today_row.iloc[0].get("meals"))
         prev_weight = today_row.iloc[0]["weight"]
         prev_exercises = _normalize_exercises(today_row.iloc[0].get("exercises"))
@@ -331,7 +325,6 @@ def page_A():
     st.subheader("오늘 날짜")
     st.write(f"한국 기준: **{today_kr}**")
 
-    # 직전 T 찾기
     last_T = find_last_T(df, today_iso)
     if last_T is not None:
         last_t_date, last_t_weight = last_T
@@ -340,7 +333,6 @@ def page_A():
         last_t_date, last_t_weight = None, None
         st.info("직전 T 없음 (첫 기록)")
 
-    # 오늘 T 몸무게 표시
     if not today_row.empty:
         today_weight_display = today_row.iloc[0]["weight"]
         if today_weight_display is not None:
@@ -366,24 +358,9 @@ def page_A():
         di = st.text_input("저녁 식단", value=prev_meals.get("저녁", ""))
 
     with col2:
-        kcal_bf = st.number_input(
-            "아침 칼로리",
-            min_value=0,
-            step=10,
-            value=int(prev_cb.get("아침", 0)),
-        )
-        kcal_lu = st.number_input(
-            "점심 칼로리",
-            min_value=0,
-            step=10,
-            value=int(prev_cb.get("점심", 0)),
-        )
-        kcal_di = st.number_input(
-            "저녁 칼로리",
-            min_value=0,
-            step=10,
-            value=int(prev_cb.get("저녁", 0)),
-        )
+        kcal_bf = st.number_input("아침 칼로리", min_value=0, step=10, value=int(prev_cb.get("아침", 0)))
+        kcal_lu = st.number_input("점심 칼로리", min_value=0, step=10, value=int(prev_cb.get("점심", 0)))
+        kcal_di = st.number_input("저녁 칼로리", min_value=0, step=10, value=int(prev_cb.get("저녁", 0)))
 
     total_kcal = kcal_bf + kcal_lu + kcal_di
     st.write(f"**총합 칼로리:** {total_kcal} kcal")
@@ -395,6 +372,7 @@ def page_A():
     st.subheader("운동 기록 (누적)")
 
     exercise_input = st.text_input("운동 입력 (예: 스쿼트 30회 x 3세트)", key="exercise_input")
+
     st.write("오늘 기록된 운동:")
     if prev_exercises:
         for i, ex in enumerate(prev_exercises, 1):
@@ -437,10 +415,14 @@ def page_A():
             st.warning("운동 내용을 입력해줘.")
         else:
             if not today_row.empty:
-                idx = df.index[df["date"] == today_iso][0]
-                current = _normalize_exercises(df.loc[idx, "exercises"])
+                idxs = df.index[df["date"] == today_iso].tolist()
+                idx0 = idxs[0]
+
+                current = _normalize_exercises(df.at[idx0, "exercises"])
                 current.append(ex)
-                df.loc[idx, "exercises"] = [current]
+
+                for ix in idxs:
+                    df.at[ix, "exercises"] = current
             else:
                 prev_total_score = 0.0 if df.empty else df["total_score"].fillna(0).astype(float).iloc[-1]
                 new_row = {
@@ -448,8 +430,8 @@ def page_A():
                     "date": today_iso,
                     "weight": None,
                     "status": "미확정",
-                    "meals": meals_dict,                 # 현재 입력값 반영
-                    "calories_breakdown": cb_dict,        # 현재 입력값 반영
+                    "meals": meals_dict,
+                    "calories_breakdown": cb_dict,
                     "total_calories": int(total_kcal),
                     "exercises": [ex],
                     "score": 0.0,
@@ -460,7 +442,6 @@ def page_A():
             df = df.sort_values("date").reset_index(drop=True)
             save_data(df)
             st.success("운동이 추가 저장되었습니다. (누적)")
-            # 입력칸 초기화를 위해 rerun
             st.session_state["exercise_input"] = ""
             st.rerun()
 
@@ -487,8 +468,6 @@ def page_A():
             df_recent.loc[idxs, "meals"] = [meals_dict] * len(idxs)
             df_recent.loc[idxs, "calories_breakdown"] = [cb_dict] * len(idxs)
             df_recent.loc[idxs, "total_calories"] = int(total_kcal)
-
-            # exercises 유지(이미 저장된 것 유지)
         else:
             new_row = {
                 "id": None,
@@ -530,7 +509,7 @@ def page_A():
         df_merged = pd.concat([df_older, df_recent], ignore_index=True)
         df_merged = df_merged.sort_values("date").reset_index(drop=True)
 
-        df_merged = save_data(df_merged)
+        save_data(df_merged)
 
         st.success("오늘 T 기록이 저장되었습니다.")
         st.write(f"F 개수: {num_f}")
@@ -539,7 +518,6 @@ def page_A():
         latest_total = df_recent["total_score"].fillna(0).astype(float).iloc[-1] if not df_recent.empty else 0.0
         st.write(f"총합 포인트: **{latest_total}점**")
 
-    # ---------------- B / C 이동 ----------------
     if st.button("B 화면으로 이동"):
         st.session_state["page"] = "B"
         st.rerun()
@@ -548,7 +526,6 @@ def page_A():
         st.session_state["page"] = "C"
         st.rerun()
 
-    # ---------------- T 기록 수정 ----------------
     st.markdown("---")
     st.subheader("T 기록 수정하기")
 
@@ -612,11 +589,8 @@ def page_A():
         df = df.sort_values("date").reset_index(drop=True)
         df = recalc_total_scores(df)
 
-        df = save_data(df)
+        save_data(df)
         st.success("수정 완료! 그래프와 기록이 업데이트되었습니다.")
-
-
-# ---------------- B 화면 ----------------
 
 
 def page_B():
@@ -697,9 +671,6 @@ def page_B():
         st.rerun()
 
 
-# ---------------- C 화면 ----------------
-
-
 def page_C():
     st.title("성진 다이어트 프로그램 – C 화면 (오늘 요약)")
 
@@ -754,9 +725,6 @@ def page_C():
     if st.button("B 화면으로 이동"):
         st.session_state["page"] = "B"
         st.rerun()
-
-
-# ---------------- 메인 ----------------
 
 
 def main():
